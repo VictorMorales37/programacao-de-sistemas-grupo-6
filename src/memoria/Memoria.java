@@ -9,7 +9,7 @@ public class Memoria {
 
     public Memoria(int tamanhoMemoria) {
          
-        if (tamanho < TAMANHO_MINIMO){
+        if (tamanhoMemoria < TAMANHO_MINIMO){
             throw new IllegalArgumentException("Tamanho de memoria menor que o tamanho minimo");
         }
       

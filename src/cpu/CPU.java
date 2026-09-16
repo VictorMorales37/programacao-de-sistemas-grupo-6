@@ -25,5 +25,4 @@ public class CPU {
 
     //Contém várias informações, incluindo código condicional (CC)
     Registrador rSW= new Registrador(9, 24);
-
 }

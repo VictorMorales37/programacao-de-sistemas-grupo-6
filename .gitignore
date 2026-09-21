@@ -28,3 +28,17 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+entrega-cpu-controle/arquivos/src/Main.java
+entrega-cpu-controle/arquivos/src/cpu/PassoListener.java
+entrega-cpu-controle/arquivos/src/cpu/instrucoes/Instrucao.java
+entrega-cpu-controle/arquivos/src/cpu/instrucoes/ExecutorInstrucoes.java
+entrega-cpu-controle/arquivos/src/cpu/instrucoes/Decodificador.java
+entrega-cpu-controle/arquivos/src/cpu/CPU.java
+entrega-cpu-controle/aplicar_commits.sh
+arquivos/src/Main.java
+arquivos/src/cpu/PassoListener.java
+arquivos/src/cpu/instrucoes/Instrucao.java
+arquivos/src/cpu/instrucoes/ExecutorInstrucoes.java
+arquivos/src/cpu/instrucoes/Decodificador.java
+arquivos/src/cpu/CPU.java
+aplicar_commits.sh

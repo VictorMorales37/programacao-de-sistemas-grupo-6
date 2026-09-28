@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/TrabalhoPS.iml" filepath="$PROJECT_DIR$/TrabalhoPS.iml" />
+      <module fileurl="file://$PROJECT_DIR$/sic-xe-simulator.iml" filepath="$PROJECT_DIR$/sic-xe-simulator.iml" />
     </modules>
   </component>
 </project>

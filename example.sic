@@ -1,0 +1,12 @@
+; Soma 1 + 2 + 3 + 4 + 5. Resultado esperado: A=00000F, X=000006, memória[100]=00000F.
+; Endereços e valores são hexadecimais. Uma palavra possui três bytes.
+ENTRY 000000
+STOP 000007
+CODE 000000 010000 ; LDA #0
+CODE 000001 050001 ; LDX #1
+CODE 000002 9010 ; ADDR X,A
+CODE 000003 2D0006 ; TIX #6
+CODE 000004 3B2FFD ; JLT PC-3 -> endereço 2
+CODE 000005 0F0100 ; STA 100
+CODE 000006 3F0007 ; J STOP
+WORD 000100 000000

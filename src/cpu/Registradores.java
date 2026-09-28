@@ -1,110 +1,42 @@
 package cpu;
 
-// A=0, X=1, L=2, B=3, S=4, T=5, F=6, PC=8 e SW=9. 
+import java.util.List;
+import java.util.Locale;
 
-public class Registradores {
+public final class Registradores {
+    private final Registrador a = new Registrador("A", 0, 24);
+    private final Registrador x = new Registrador("X", 1, 24);
+    private final Registrador l = new Registrador("L", 2, 24);
+    private final Registrador b = new Registrador("B", 3, 24);
+    private final Registrador s = new Registrador("S", 4, 24);
+    private final Registrador t = new Registrador("T", 5, 24);
+    private final Registrador f = new Registrador("F", 6, 48);
+    private final Registrador pc = new Registrador("PC", 8, 24);
+    private final SW sw = new SW();
 
-    private final Registrador a;
-    private final Registrador x;
-    private final Registrador l;
-    private final Registrador b;
-    private final Registrador s;
-    private final Registrador t;
-    private final Registrador f;
-    private final Registrador pc;
-    private final SW sw;
+    public Registrador obterA() { return a; }
+    public Registrador obterX() { return x; }
+    public Registrador obterL() { return l; }
+    public Registrador obterB() { return b; }
+    public Registrador obterS() { return s; }
+    public Registrador obterT() { return t; }
+    public Registrador obterF() { return f; }
+    public Registrador obterPC() { return pc; }
+    public SW obterSW() { return sw; }
+    public List<Registrador> todos() { return List.of(a, x, l, b, s, t, f, pc, sw); }
 
-    public Registradores() {
-        a = new Registrador("A", 0, Registrador.TAMANHO_24_BITS); // Acumulador
-        x = new Registrador("X", 1, Registrador.TAMANHO_24_BITS); // Registrador de índice
-        l = new Registrador("L", 2, Registrador.TAMANHO_24_BITS); // Registrador de ligação
-        b = new Registrador("B", 3, Registrador.TAMANHO_24_BITS); // Registrador Base
-        s = new Registrador("S", 4, Registrador.TAMANHO_24_BITS); // Geral
-        t = new Registrador("T", 5, Registrador.TAMANHO_24_BITS); // Geral
-        f = new Registrador("F", 6, Registrador.TAMANHO_48_BITS); // Acumulador de ponto flutuante
-        pc = new Registrador("PC", 8, Registrador.TAMANHO_24_BITS); // Program Counter
-        sw = new SW(); // Palavra de status - várias informações, incluindo código condicional (CC)
+    public Registrador obterPorNumero(int numero) {
+        return todos().stream().filter(registrador -> registrador.obterNumero() == numero).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Número de registrador inválido: " + numero));
     }
-
-    public Registrador getA() {
-        return a;
+    public Registrador obterPorIdentificador(String identificador) {
+        if (identificador == null) throw new IllegalArgumentException("O identificador do registrador não pode ser nulo");
+        return todos().stream().filter(registrador -> registrador.obterIdentificador().equals(identificador.toUpperCase(Locale.ROOT))).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Registrador inválido: " + identificador));
     }
-
-    public Registrador getX() {
-        return x;
-    }
-
-    public Registrador getL() {
-        return l;
-    }
-
-    public Registrador getB() {
-        return b;
-    }
-
-    public Registrador getS() {
-        return s;
-    }
-
-    public Registrador getT() {
-        return t;
-    }
-
-    public Registrador getF() {
-        return f;
-    }
-
-    public Registrador getPC() {
-        return pc;
-    }
-
-    public SW getSW() {
-        return sw;
-    }
-
-    public Registrador getPorNumero(int numero) {
-        return switch (numero) {
-            case 0 -> a;
-            case 1 -> x;
-            case 2 -> l;
-            case 3 -> b;
-            case 4 -> s;
-            case 5 -> t;
-            case 6 -> f;
-            case 8 -> pc;
-            case 9 -> sw;
-            default -> throw new IllegalArgumentException("Numero de registrador invalido: " + numero);
-        };
-    }
-
-    public Registrador getPorIdentificador(String identificador) {
-        if (identificador == null) {
-            throw new IllegalArgumentException("Identificador nao pode ser nulo");
-        }
-
-        return switch (identificador.toUpperCase()) {
-            case "A" -> a;
-            case "X" -> x;
-            case "L" -> l;
-            case "B" -> b;
-            case "S" -> s;
-            case "T" -> t;
-            case "F" -> f;
-            case "PC" -> pc;
-            case "SW" -> sw;
-            default -> throw new IllegalArgumentException("Identificador de registrador invalido: " + identificador);
-        };
-    }
-
-    public void limpar() {
-        a.limpar();
-        x.limpar();
-        l.limpar();
-        b.limpar();
-        s.limpar();
-        t.limpar();
-        f.limpar();
-        pc.limpar();
-        sw.limpar();
+    public void limpar() { todos().forEach(Registrador::limpar); }
+    public long[] capturarEstado() { return todos().stream().mapToLong(Registrador::obterValor).toArray(); }
+    public void restaurarEstado(long[] valores) {
+        for (int indice = 0; indice < valores.length; indice++) todos().get(indice).definirValor(valores[indice]);
     }
 }

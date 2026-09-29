@@ -1,74 +1,46 @@
 package memoria;
 
-public class Memoria {
+import java.util.Arrays;
 
-    public static final int TAMANHO_MINIMO = 1024; // 1KB
-    public static final int TAMANHO_PADRAO = 1024*1024; // 1MB igual o Beck
-  
-    private final byte[] memoria;
+/** Armazenamento de bytes big-endian; endereços lógicos apontam para palavras de três bytes. */
+public final class Memoria {
+    public static final int TAMANHO_MINIMO = 1024;
+    public static final int TAMANHO_PADRAO = 3 * 1024 * 1024;
+    private final byte[] bytesMemoria;
 
-    public Memoria(){
-        this(TAMANHO_PADRAO);
+    public Memoria() { this(TAMANHO_PADRAO); }
+    public Memoria(int tamanho) {
+        if (tamanho < TAMANHO_MINIMO) throw new IllegalArgumentException("A memória deve conter pelo menos 1024 bytes");
+        bytesMemoria = new byte[tamanho];
     }
-
-    public Memoria(int tamanhoMemoria){
-        if(tamanhoMemoria < TAMANHO_MINIMO){
-            throw new IllegalArgumentException("Tamanho da memoria menor que o tamanho minimo");
-        }
-        memoria = new byte[tamanhoMemoria];
+    public static int converterParaEnderecoEmBytes(int endereco) {
+        if (endereco < 0 || endereco > 0xFFFFFF)
+            throw new IllegalArgumentException("Endereço de palavra inválido: " + endereco);
+        return endereco * 3;
     }
-
-    public int getTamanho(){
-        return memoria.length;
+    public int obterTamanho() { return bytesMemoria.length; }
+    public void validarIntervalo(int endereco, int comprimento) {
+        if (endereco < 0 || comprimento < 0 || endereco > bytesMemoria.length - comprimento)
+            throw new IllegalArgumentException("Intervalo fora dos limites da memória: " + endereco + " + " + comprimento);
     }
-
-    private void validarEndereco(int endereco){
-        if (endereco < 0 || endereco > memoria.length){
-            throw new IndexOutOfBoundsException("Endereço inserido inválido: " + endereco);
-        }
+    public int lerByte(int endereco) {
+        validarIntervalo(endereco, 1);
+        return bytesMemoria[endereco] & 255;
     }
-
-
-
-    public byte lerByte(int endereco){
-        validarEndereco(endereco);
-        return memoria[endereco];
+    public void escreverByte(int endereco, int valor) {
+        validarIntervalo(endereco, 1);
+        bytesMemoria[endereco] = (byte) valor;
     }
-
-    public void escreveByte(int endereco, int valor){
-        validarEndereco(endereco);
-        memoria[endereco] = (byte) valor;
-    }
-
-// ##
     public Palavra lerPalavra(int endereco) {
-        validarEndereco(endereco);
-        validarEndereco(endereco + 2);
-
-        int b0 = memoria[endereco] & 0xFF;
-        int b1 = memoria[endereco + 1] & 0xFF;
-        int b2 = memoria[endereco + 2] & 0xFF;
-
-        return new Palavra((b0 << 16) | (b1 << 8) | b2);
+        validarIntervalo(endereco, 3);
+        return new Palavra((lerByte(endereco) << 16) | (lerByte(endereco + 1) << 8) | lerByte(endereco + 2));
     }
-
-
-    public void escreverPalavra(int endereco, Palavra palavra){
-        escreverPalavra(endereco, palavra.getValor());
+    public void escreverPalavra(int endereco, Palavra palavra) { escreverPalavra(endereco, palavra.obterValor()); }
+    public void escreverPalavra(int endereco, int valor) {
+        validarIntervalo(endereco, 3);
+        bytesMemoria[endereco] = (byte) (valor >>> 16);
+        bytesMemoria[endereco + 1] = (byte) (valor >>> 8);
+        bytesMemoria[endereco + 2] = (byte) valor;
     }
-
-    public void escreverPalavra(int endereco, int valor){
-        validarEndereco(endereco);
-        validarEndereco(endereco + 2);
-
-        int v = valor & 0xFFFFFF;
-
-        memoria[endereco] = (byte) ((v >> 16) & 0xFF);
-        memoria[endereco + 1] = (byte) ((v >> 8) & 0xFF);
-        memoria[endereco + 2] = (byte) (v & 0xFF);
-    }
-
-    public void limpar() {
-        java.util.Arrays.fill(memoria, (byte ) 0);
-    }
+    public void limpar() { Arrays.fill(bytesMemoria, (byte) 0); }
 }

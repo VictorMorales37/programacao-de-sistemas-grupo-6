@@ -6,6 +6,7 @@ try {
     & javac --release 17 -encoding UTF-8 -d build/classes $arquivosFonte
     if ($LASTEXITCODE -ne 0) { throw 'Falha na compilação' }
     Copy-Item -LiteralPath example.sic -Destination build/classes/example.sic -Force
+    Copy-Item -LiteralPath exemplo.asm -Destination build/classes/exemplo.asm -Force
     # Lê as propriedades do ambiente Java sem transformar o stderr nativo em erro do PowerShell 5.
     $processoJava = New-Object System.Diagnostics.Process
     $processoJava.StartInfo.FileName = (Get-Command java).Source

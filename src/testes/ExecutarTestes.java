@@ -14,6 +14,7 @@ public final class ExecutarTestes {
             TesteDecodificador.class,
             TesteCpuExecucao.class,
             TesteCarregador.class,
+            TesteMontador.class,
     };
 
     public static void main(String[] args) {

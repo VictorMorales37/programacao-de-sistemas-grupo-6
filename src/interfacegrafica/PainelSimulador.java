@@ -9,6 +9,11 @@ import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import montador.Montador;
+import montador.ProgramaMontado;
 
 /** Carrega código de máquina, executa o programa e permite inspecionar seu estado. */
 public final class PainelSimulador extends JPanel {
@@ -128,8 +133,8 @@ public final class PainelSimulador extends JPanel {
             }
         });
 
-        try (var fluxo = getClass().getResourceAsStream("/example.sic")) {
-            if (fluxo == null) throw new IllegalStateException("Recurso example.sic não encontrado");
+        try (var fluxo = getClass().getResourceAsStream("/exemplo.asm")) {
+            if (fluxo == null) throw new IllegalStateException("Recurso exemplo.asm não encontrado");
             carregarFonte(new String(fluxo.readAllBytes(), StandardCharsets.UTF_8));
         } catch (Exception erro) {
             estado.setText("Erro: " + erro.getMessage());
@@ -141,7 +146,10 @@ public final class PainelSimulador extends JPanel {
     public void carregarFonte(String fonte) {
         temporizadorExecucao.stop();
         try {
-            ImagemPrograma imagemCarregada = new CarregadorPrograma().analisar(fonte);
+            // Formato hex do carregador legado ou assembly, montado em dois passos.
+            ImagemPrograma imagemCarregada = ehComandoCarregador(fonte)
+                ? new CarregadorPrograma().analisar(fonte)
+                : montarAssembly(fonte);
             CPU maquinaCarregada = imagemCarregada.criarCPU();
             imagem = imagemCarregada;
             maquina = maquinaCarregada;
@@ -155,6 +163,51 @@ public final class PainelSimulador extends JPanel {
             estado.setText("Erro: " + erro.getMessage());
             if (maquina != null) atualizar();
         }
+    }
+
+    /** Verifica se a primeira linha de código tem um comando do carregador hex (ENTRY, STOP, CODE, WORD). */
+    private static boolean ehComandoCarregador(String fonte) {
+        // Lança a mensagem amigável do próprio carregador quando não há nenhuma linha de código.
+        String[] linhas = fonte.replace("\uFEFF", "").split("\\R");
+        for (String bruta : linhas) {
+            String linha = bruta.split(";", 2)[0].trim();
+            if (linha.isEmpty()) continue;
+            String comando = linha.split("\\s+")[0].toUpperCase(Locale.ROOT);
+            return comando.equals("ENTRY") || comando.equals("STOP")
+                || comando.equals("CODE") || comando.equals("WORD");
+        }
+        return true;
+    }
+
+    /** Monta o fonte assembly; em caso de erros, lança um relatório completo na mensagem do painel. */
+    private static ImagemPrograma montarAssembly(String fonte) {
+        ProgramaMontado montado = Montador.montar(fonte);
+        if (!montado.validada()) throw new IllegalArgumentException(relatorioErros(montado));
+        List<ImagemPrograma.Entrada> entradas = new ArrayList<>();
+        for (ProgramaMontado.Entrada entrada : montado.entradas())
+            entradas.add(new ImagemPrograma.Entrada(entrada.endereco(), entrada.dados(), entrada.executavel()));
+        return new ImagemPrograma(montado.enderecoEntrada(), montado.enderecoParada(), entradas);
+    }
+
+    /** Constrói o relatório de montagem: erros, código gerado por linha e tabela de símbolos. */
+    private static String relatorioErros(ProgramaMontado montado) {
+        StringBuilder relatorio = new StringBuilder("Falha na montagem:");
+        for (ProgramaMontado.ErroMontagem erro : montado.erros())
+            relatorio.append(String.format("%nLinha %d: %s", erro.linha(), erro.mensagem()));
+        for (String aviso : montado.avisos())
+            relatorio.append(String.format("%nAviso: %s", aviso));
+        if (!montado.listagem().isEmpty()) {
+            relatorio.append("\n\nListagem:");
+            for (ProgramaMontado.LinhaListagem linha : montado.listagem())
+                relatorio.append(String.format("%n%5d  %6s  %-12s  %s", linha.numero(),
+                    linha.endereco() >= 0 ? String.format("%06X", linha.endereco()) : "", linha.codigo(), linha.fonte()));
+        }
+        if (!montado.tabelaSimbolos().isEmpty()) {
+            relatorio.append("\n\nTabela de símbolos:");
+            for (ProgramaMontado.Simbolo simbolo : montado.tabelaSimbolos())
+                relatorio.append(String.format("%n%-8s %06X", simbolo.nome(), simbolo.endereco()));
+        }
+        return relatorio.toString();
     }
 
     public void executarPasso() {

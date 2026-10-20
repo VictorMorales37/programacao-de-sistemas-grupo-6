@@ -83,6 +83,57 @@ Um temporizador Swing executa lotes de até 100 instruções e devolve o control
 
 Todos os nove registradores listados no trabalho são implementados. `CLEAR` usa o codigoOperacao `B4`, preservando `04` para `LDX`. O formato 2 usa um codigoOperacao de 8 bits seguido por dois campos de operandos de 4 bits. Essas decisões resolvem inconsistências presentes na especificação fornecida.
 
+## Parte II
+
+## Montador de dois passos
+
+O montador traduz linguagem de montagem SIC/XE para a imagem de programa executada pelo simulador. Ele está em um pacote próprio (`montador/`), totalmente desacoplado do resto do projeto: a interface converte o `ProgramaMontado` produzido em uma `ImagemPrograma` e o fluxo de execução não muda.
+
+### Entrada da montagem
+
+```
+        LDA   #0        ; comentário
+VOLTA   ADDR  X,A
+SOMA    RESW  1
+```
+
+- Uma linha tem de 1 a 4 campos separados por espaços: `[rótulo] operador [opd1 [opd2]]`.
+- **Desambiguação:** o primeiro campo é o operador quando o token (em maiúsculas e sem o prefixo `+`) é um mnemônico ou diretiva conhecido; caso contrário é rótulo. Por consequência, um rótulo não pode ter o mesmo nome de um mnemônico.
+- Números são hexadecimais, como no carregador de código.
+- Operandos: `#valor` imediato, `@alvo` indireto, `alvo,X` indexado, `+NLDM` formato 4. Instruções de formato 2 usam nomes de registradores (A, X, L, B, S, T, F, PC, SW); `CLEAR`/`TIXR` aceitam um registrador e `SHIFTL`/`SHIFTR` aceitam registrador e deslocamento (`SHIFTL A,3`).
+- Diretivas: `START fim` (deve ser a primeira linha com operador; define a LC inicial e o início de execução padrão), `WORD valor`, `RESW n` (reserva n palavras), `RESB n` (reserva n bytes, arredondados para cima em palavras; emite aviso quando há preenchimento desperdiçado), `END [início]` (início de execução; padrão: endereço inicial), **`EQU valor`** (defini o rótulo com o valor — número ou símbolo já definido — sem ocupar memória), **`ORG v`** (reinicializa a LC; rótulos em ORG/BASE não definem símbolo), **`BASE v`** (valor que B terá na execução) e **`BYTE X'0F1A'` / `BYTE C'ab'`** (constantes em hexa por pares de dígitos ou caracteres; ocupam as palavras necessárias, arredondadas para cima).
+
+### Passos, símbolos e encerramento
+
+- **Passo 1:** LC (contador de posição, em palavras de 3 bytes), tabela de símbolos e validações (símbolo duplicado, operador inválido, quantidade de operandos).
+- **Passo 2:** byte a byte do código, com resolução de símbolos e geração da listagem (símbolo indefinido, endereços fora de faixa).
+- **Símbolo implícito `STOP`:** primeira palavra livre após o programa. Programas são encerrados com `J STOP`, e o Simulador conclui quando PC chega a esse endereço — a mesma convenção do carregador.
+- Instruções de formato 2 e 3 ocupam 1 palavra; formato 4, 2 palavras.
+
+### Codificação de formato 3
+
+- Sem operando (só `RSUB`): `ni = 00`.
+- Imediato: `n=0 i=1`; campo = valor (0..0xFFF).
+- Indireto: `n=1 i=0`; simples: `n=1 i=1` (obrigatório para permitir indexação).
+- Campo do alvo: direto se alvo ≤ 0xFFF; senão PC-relativo (janela ±2048 palavras, bit `p`); senão **base-relativo** (se `BASE` ativo e deslocamento 0..0xFFF, bit `b`); caso contrário erro sugerindo formato 4. A diretiva `BASE` documenta o valor que o programa carrega em B (o montador não gera carga de B).
+- Imediato com símbolo (ex.: `#CONTADOR`) usa o valor do símbolo; imediato negativo (`#-5`) não é suportado — o campo da instrução é sem sinal — e gera erro com sugestão de uso.
+- Indexação `,X` exige endereçamento simples, igual ao decodificador da CPU.
+
+### Estruturas de dados
+
+| Estrutura | Descrição |
+| --- | --- |
+| `Linha` | Analisa uma linha do fonte: remove comentários, separa campos e desambígua rótulo/operador. |
+| `TabelaInstrucoes` | MOT do montador: os 38 mnemônicos e seus códigos/formatos com os mesmos valores de `Opcode` (copia intencional, `montador` não depende de `cpu`). |
+| `TabelaDiretivas` | POT: diretivas `START`, `END`, `WORD`, `RESW`, `RESB`, `EQU`, `ORG`, `BASE`, `BYTE`. |
+| `TabelaSimbolos` | TS mapeando rótulos aos endereços (passo 1 preenche; passo 2 consulta). |
+| `ProgramaMontado` | Saída: entradas de memória, endereço de entrada, endereço de parada (STOP), tabela de símbolos, listagem e erros. |
+| `Montador` | Orquestra os dois passos de `montar(fonte)`; erros são acumulados e nunca lançados. |
+
+### Saída e integração
+
+O método `Montador.montar(fonte)` devolve o `ProgramaMontado` a quem chamou. A interface chama o montador e converte as entradas para `ImagemPrograma` (endereço, bytes e indicação de instrução executável); com erros, exibe erros, listagem e tabela de símbolos. O carregador legado em hexa continua funcionando: a interface detecta o formato pela primeira linha (comandos `ENTRY`/`STOP`/`CODE`/`WORD` → código de máquina; senão → montador).
+
 ## Como executar
 
 Requer Java 17 ou superior.

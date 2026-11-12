@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import montador.Montador;
+import montador.ProcessadorMacros;
 import montador.ProgramaMontado;
 
 /** Carrega código de máquina, executa o programa e permite inspecionar seu estado. */
@@ -133,9 +134,8 @@ public final class PainelSimulador extends JPanel {
             }
         });
 
-        try (var fluxo = getClass().getResourceAsStream("/exemplo.asm")) {
-            if (fluxo == null) throw new IllegalStateException("Recurso exemplo.asm não encontrado");
-            carregarFonte(new String(fluxo.readAllBytes(), StandardCharsets.UTF_8));
+        try {
+            carregarFonte(lerExemploInicial());
         } catch (Exception erro) {
             estado.setText("Erro: " + erro.getMessage());
             botaoPasso.setEnabled(false);
@@ -143,11 +143,24 @@ public final class PainelSimulador extends JPanel {
         }
     }
 
+    private String lerExemploInicial() throws java.io.IOException {
+        try (var fluxo = getClass().getResourceAsStream("/exemplo.asm")) {
+            if (fluxo != null) return new String(fluxo.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        java.nio.file.Path arquivo = java.nio.file.Path.of("exemplo.asm");
+        if (java.nio.file.Files.isRegularFile(arquivo))
+            return java.nio.file.Files.readString(arquivo, StandardCharsets.UTF_8);
+        throw new java.io.IOException(
+            "exemplo.asm não encontrado no classpath nem no diretório atual: "
+                + java.nio.file.Path.of("").toAbsolutePath());
+    }
+
     public void carregarFonte(String fonte) {
         temporizadorExecucao.stop();
         try {
             // Formato hex do carregador legado ou assembly, montado em dois passos.
-            ImagemPrograma imagemCarregada = ehComandoCarregador(fonte)
+            boolean fonteAssembly = !ehComandoCarregador(fonte);
+            ImagemPrograma imagemCarregada = !fonteAssembly
                 ? new CarregadorPrograma().analisar(fonte)
                 : montarAssembly(fonte);
             CPU maquinaCarregada = imagemCarregada.criarCPU();
@@ -157,7 +170,9 @@ public final class PainelSimulador extends JPanel {
             inicioMemoria = 0;
             editor.setText(fonte);
             editor.setCaretPosition(0);
-            estado.setText("Carregado");
+            estado.setText(fonteAssembly
+                ? "Carregado; MASMAPRG.ASM gerado em " + java.nio.file.Path.of("MASMAPRG.ASM").toAbsolutePath()
+                : "Carregado");
             atualizar();
         } catch (Exception erro) {
             estado.setText("Erro: " + erro.getMessage());
@@ -181,7 +196,14 @@ public final class PainelSimulador extends JPanel {
 
     /** Monta o fonte assembly; em caso de erros, lança um relatório completo na mensagem do painel. */
     private static ImagemPrograma montarAssembly(String fonte) {
-        ProgramaMontado montado = Montador.montar(fonte);
+        String fonteExpandido = ProcessadorMacros.processar(fonte);
+        try {
+            java.nio.file.Files.writeString(java.nio.file.Path.of("MASMAPRG.ASM"),
+                fonteExpandido, StandardCharsets.UTF_8);
+        } catch (java.io.IOException erro) {
+            throw new IllegalStateException("Não foi possível gerar MASMAPRG.ASM: " + erro.getMessage(), erro);
+        }
+        ProgramaMontado montado = Montador.montar(fonteExpandido);
         if (!montado.validada()) throw new IllegalArgumentException(relatorioErros(montado));
         List<ImagemPrograma.Entrada> entradas = new ArrayList<>();
         for (ProgramaMontado.Entrada entrada : montado.entradas())

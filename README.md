@@ -127,12 +127,25 @@ SOMA    RESW  1
 | `TabelaInstrucoes` | MOT do montador: os 38 mnemônicos e seus códigos/formatos com os mesmos valores de `Opcode` (copia intencional, `montador` não depende de `cpu`). |
 | `TabelaDiretivas` | POT: diretivas `START`, `END`, `WORD`, `RESW`, `RESB`, `EQU`, `ORG`, `BASE`, `BYTE`. |
 | `TabelaSimbolos` | TS mapeando rótulos aos endereços (passo 1 preenche; passo 2 consulta). |
+| `ProcessadorMacros` | Expande definições e chamadas de macro antes da montagem, inclusive chamadas e definições aninhadas. |
 | `ProgramaMontado` | Saída: entradas de memória, endereço de entrada, endereço de parada (STOP), tabela de símbolos, listagem e erros. |
 | `Montador` | Orquestra os dois passos de `montar(fonte)`; erros são acumulados e nunca lançados. |
 
 ### Saída e integração
 
-O método `Montador.montar(fonte)` devolve o `ProgramaMontado` a quem chamou. A interface chama o montador e converte as entradas para `ImagemPrograma` (endereço, bytes e indicação de instrução executável); com erros, exibe erros, listagem e tabela de símbolos. O carregador legado em hexa continua funcionando: a interface detecta o formato pela primeira linha (comandos `ENTRY`/`STOP`/`CODE`/`WORD` → código de máquina; senão → montador).
+O método `Montador.montar(fonte)` devolve o `ProgramaMontado` a quem chamou. A interface expande macros, chama o montador e converte as entradas para `ImagemPrograma` (endereço, bytes e indicação de instrução executável); com erros, exibe erros, listagem e tabela de símbolos. O carregador legado em hexa continua funcionando: a interface detecta o formato pela primeira linha (comandos `ENTRY`/`STOP`/`CODE`/`WORD` → código de máquina; senão → montador).
+
+## Processamento de macros
+
+Antes da montagem, o pré-processador remove as definições e expande as chamadas de macros. A sintaxe é `NOME MACRO &PARAM1,&PARAM2`, seguida pelo corpo e `MEND`; chamadas podem usar argumentos separados por vírgula e macros podem chamar outras macros ou conter definições aninhadas. As macros precisam ser definidas antes de serem chamadas.
+
+Na interface, ao carregar um fonte assembly, a expansão é aplicada automaticamente antes do montador e gravada como `MASMAPRG.ASM` no diretório atual (o estado da interface exibe o caminho). Para processar um arquivo diretamente e gerar o mesmo arquivo no diretório atual:
+
+```sh
+java -jar dist/sic-xe-simulator.jar caminho/entrada.asm
+```
+
+O arquivo gerado é fonte assembly expandido, pronto para a etapa de montagem.
 
 ## Como executar
 

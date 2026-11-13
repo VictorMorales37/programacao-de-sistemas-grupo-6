@@ -12,245 +12,231 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/** Pré-processador de uma passagem: copia, define ou expande na ordem do fonte. */
 public final class ProcessadorMacros {
-
-    private static final String MACRO = "MACRO";
-    private static final String MEND = "MEND";
     private static final int LIMITE_EXPANSAO = 100;
-    private static final Pattern PARAMETRO = Pattern.compile("&[A-Za-z_][A-Za-z0-9_]*");
-
-    private record Macro(String nome, List<String> parametros, List<String> corpo, int linhaDefinicao) {}
-    private record Definicao(String nome, List<String> parametros) {}
-    private record LinhaExpansivel(String rotulo, String operador, String operandos) {}
+    private static final Pattern IDENTIFICADOR = Pattern.compile("&?[A-Za-z_][A-Za-z0-9_]*");
+    private static final Pattern TOKEN = Pattern.compile("(?i)\\.SER(?![A-Za-z0-9_])|(?<![A-Za-z0-9_&])&?[A-Za-z_][A-Za-z0-9_]*");
+    private interface Item {}
+    private record Texto(String valor, int linha) implements Item {}
+    private record Definicao(String nome, List<String> parametros, String parametroRotulo,
+                             List<Item> corpo, int linha) implements Item {}
+    private record Macro(Definicao definicao, Map<String, String> capturados) {}
+    private record Cabecalho(String nome, List<String> parametros, String parametroRotulo) {}
+    private record Chamada(String rotulo, String nome, String operandos) {}
 
     private final Map<String, Macro> macros = new LinkedHashMap<>();
     private final List<String> saida = new ArrayList<>();
-    private List<String> linhas;
+    private final List<String> linhas;
     private int indice;
+    private long serial;
 
-    private ProcessadorMacros() {}
+    private ProcessadorMacros(String fonte) {
+        // O BOM só é marcador de codificação quando está no início do arquivo.
+        linhas = List.of((fonte.startsWith("\uFEFF") ? fonte.substring(1) : fonte).split("\\R", -1));
+    }
 
     public static String processar(String fonte) {
-        ProcessadorMacros processador = new ProcessadorMacros();
-        processador.linhas = List.of(fonte.replace("\uFEFF", "").split("\\R", -1));
-        processador.processarLinhas(0);
-        return String.join(System.lineSeparator(), processador.saida);
+        ProcessadorMacros p = new ProcessadorMacros(fonte);
+        while (p.indice < p.linhas.size()) p.executar(p.lerItem(), Map.of(), 0, 0, 0);
+        return String.join(System.lineSeparator(), p.saida);
     }
 
     public static Path processarArquivo(Path arquivoFonte) throws IOException {
-        String fonte = Files.readString(arquivoFonte, StandardCharsets.UTF_8);
-        return processarEGravar(fonte, Path.of("MASMAPRG.ASM"));
+        return processarEGravar(Files.readString(arquivoFonte, StandardCharsets.UTF_8), Path.of("MASMAPRG.ASM"));
     }
 
     public static Path processarEGravar(String fonte, Path arquivoSaida) throws IOException {
-        Path saida = arquivoSaida.toAbsolutePath();
-        Files.writeString(saida, processar(fonte), StandardCharsets.UTF_8);
-        return saida;
+        String expandido = processar(fonte);
+        Path destino = arquivoSaida.toAbsolutePath();
+        Files.writeString(destino, expandido, StandardCharsets.UTF_8);
+        return destino;
     }
 
-    private void processarLinhas(int profundidade) {
+    private Item lerItem() {
+        int numero = indice + 1;
+        String texto = linhas.get(indice++);
+        String codigo = semComentario(texto).trim();
+        if (ehFim(codigo)) throw erro(numero, "MEND/MCEND sem uma definição MACRO correspondente");
+        Cabecalho cabecalho = cabecalho(codigo, numero);
+        if (cabecalho == null) return new Texto(texto, numero);
+        return lerDefinicao(cabecalho, numero, 0);
+    }
+
+    private Definicao lerDefinicao(Cabecalho cabecalho, int numero, int nivel) {
+        if (nivel >= LIMITE_EXPANSAO) throw erro(numero, "Limite de definições aninhadas excedido");
+        validarCabecalho(cabecalho, numero);
+        List<Item> corpo = new ArrayList<>();
         while (indice < linhas.size()) {
-            int numeroLinha = indice + 1;
+            int linha = indice + 1;
             String texto = linhas.get(indice++);
             String codigo = semComentario(texto).trim();
-            if (codigo.isEmpty()) {
-                saida.add(texto);
-                continue;
+            if (ehFim(codigo)) {
+                if (codigo.split("\\s+").length != 1) throw erro(linha, "MEND/MCEND não aceita operandos");
+                return new Definicao(normalizar(cabecalho.nome()),
+                    cabecalho.parametros().stream().map(ProcessadorMacros::normalizar).toList(),
+                    cabecalho.parametroRotulo(), List.copyOf(corpo), numero);
             }
-            if (ehMend(codigo))
-                throw erro(numeroLinha, "MEND sem uma definição MACRO correspondente");
-
-            Definicao definicao = analisarDefinicao(codigo);
-            if (definicao != null) {
-                lerDefinicao(definicao, numeroLinha, profundidade);
-                continue;
-            }
-
-            LinhaExpansivel chamada = analisarChamada(codigo);
-            Macro macro = chamada == null ? null : macros.get(normalizar(chamada.operador()));
-            if (macro == null) {
-                saida.add(texto);
-                continue;
-            }
-
-            if (profundidade >= LIMITE_EXPANSAO)
-                throw erro(numeroLinha, "Limite de expansão de macros excedido (possível recursão)");
-            List<String> argumentos = analisarArgumentos(chamada.operandos());
-            if (argumentos.size() != macro.parametros().size())
-                throw erro(numeroLinha, "Macro " + macro.nome() + " espera "
-                    + macro.parametros().size() + " argumento(s), recebeu " + argumentos.size());
-
-            Map<String, String> substituicoes = new LinkedHashMap<>();
-            for (int i = 0; i < argumentos.size(); i++)
-                substituicoes.put(macro.parametros().get(i), substituir(argumentos.get(i), Map.of()));
-
-            int inicioExpansao = saida.size();
-            for (String linhaCorpo : macro.corpo()) {
-                String expandida = substituir(linhaCorpo, substituicoes);
-                processarLinhaExpandida(expandida, substituicoes, profundidade + 1, numeroLinha);
-            }
-            aplicarRotulo(chamada.rotulo(), inicioExpansao);
+            Cabecalho interna = cabecalho(codigo, linha);
+            corpo.add(interna == null ? new Texto(texto, linha) : lerDefinicao(interna, linha, nivel + 1));
         }
+        throw erro(numero, "Definição de macro " + cabecalho.nome() + " sem MEND/MCEND");
     }
 
-    private void lerDefinicao(Definicao definicao, int numeroLinha, int profundidade) {
-        String nome = normalizar(definicao.nome());
-        if (nome.equals(MACRO) || nome.equals(MEND))
-            throw erro(numeroLinha, "Nome de macro reservado: " + nome);
-        if (macros.containsKey(nome))
-            throw erro(numeroLinha, "Macro já definida: " + nome);
-        for (String parametro : definicao.parametros()) {
-            if (!PARAMETRO.matcher(parametro).matches())
-                throw erro(numeroLinha, "Parâmetro inválido na definição de " + nome + ": " + parametro);
+    private void executar(Item item, Map<String, String> ambiente, int profundidade, int linhaChamada, long numeroSerial) {
+        if (item instanceof Definicao definicao) {
+            // Só ativa uma definição interna quando a expansão chega até ela.
+            Map<String, String> capturados = new LinkedHashMap<>(ambiente);
+            definicao.parametros().forEach(capturados::remove);
+            if (definicao.parametroRotulo() != null) capturados.remove(definicao.parametroRotulo());
+            macros.put(definicao.nome(), new Macro(definicao, Map.copyOf(capturados)));
+            return;
         }
-        if (definicao.parametros().stream().map(ProcessadorMacros::normalizar).distinct().count()
-                != definicao.parametros().size())
-            throw erro(numeroLinha, "Parâmetro duplicado na definição de " + nome);
-
-        List<String> corpo = new ArrayList<>();
-        while (indice < linhas.size()) {
-            int linhaCorpo = indice + 1;
-            String texto = linhas.get(indice++);
-            String codigo = semComentario(texto).trim();
-            if (codigo.isEmpty()) {
-                corpo.add(texto);
-                continue;
-            }
-            if (ehMend(codigo)) {
-                macros.put(nome, new Macro(nome, definicao.parametros(), List.copyOf(corpo), numeroLinha));
-                return;
-            }
-            Definicao interna = analisarDefinicao(codigo);
-            if (interna != null) {
-                lerDefinicao(interna, linhaCorpo, profundidade + 1);
-                continue;
-            }
-            corpo.add(texto);
-        }
-        throw erro(numeroLinha, "Definição de macro " + nome + " sem MEND");
-    }
-
-    private void processarLinhaExpandida(
-            String linha, Map<String, String> substituicoes, int profundidade, int numeroChamada) {
+        Texto texto = (Texto) item;
+        String linha = substituir(texto.valor(), ambiente, numeroSerial);
         String codigo = semComentario(linha).trim();
-        if (codigo.isEmpty()) {
+        Chamada chamada = analisarChamada(codigo);
+        if (chamada == null) {
             saida.add(linha);
             return;
         }
-        LinhaExpansivel chamada = analisarChamada(codigo);
-        Macro macro = chamada == null ? null : macros.get(normalizar(chamada.operador()));
-        if (macro == null) {
-            saida.add(linha);
-            return;
-        }
+        int origem = linhaChamada == 0 ? texto.linha() : linhaChamada;
         if (profundidade >= LIMITE_EXPANSAO)
-            throw erro(numeroChamada, "Limite de expansão de macros excedido (possível recursão)");
-        List<String> argumentos = analisarArgumentos(chamada.operandos());
-        if (argumentos.size() != macro.parametros().size())
-            throw erro(numeroChamada, "Macro " + macro.nome() + " espera "
-                + macro.parametros().size() + " argumento(s), recebeu " + argumentos.size());
-
-        Map<String, String> locais = new LinkedHashMap<>(substituicoes);
-        for (int i = 0; i < argumentos.size(); i++)
-            locais.put(macro.parametros().get(i), substituir(argumentos.get(i), substituicoes));
-        int inicioExpansao = saida.size();
-        for (String linhaCorpo : macro.corpo())
-            processarLinhaExpandida(substituir(linhaCorpo, locais), locais, profundidade + 1, numeroChamada);
-        aplicarRotulo(chamada.rotulo(), inicioExpansao);
+            throw erro(origem, "Limite de expansão de macros excedido (possível recursão)");
+        Macro macro = macros.get(chamada.nome());
+        Definicao d = macro.definicao();
+        List<String> argumentos = argumentos(chamada.operandos(), origem);
+        if (argumentos.size() != d.parametros().size())
+            throw erro(origem, "Macro " + d.nome() + " espera " + d.parametros().size()
+                + " argumento(s), recebeu " + argumentos.size());
+        Map<String, String> locais = new LinkedHashMap<>(macro.capturados());
+        for (int i = 0; i < argumentos.size(); i++) locais.put(d.parametros().get(i), argumentos.get(i));
+        if (d.parametroRotulo() != null)
+            locais.put(d.parametroRotulo(), chamada.rotulo() == null ? "" : chamada.rotulo());
+        int inicio = saida.size();
+        long serialAtual = ++serial;
+        for (Item filho : d.corpo()) executar(filho, locais, profundidade + 1, origem, serialAtual);
+        if (d.parametroRotulo() == null) aplicarRotulo(chamada.rotulo(), inicio, origem);
     }
 
-    private void aplicarRotulo(String rotulo, int inicioExpansao) {
+    private void aplicarRotulo(String rotulo, int inicio, int numero) {
         if (rotulo == null) return;
-        for (int i = inicioExpansao; i < saida.size(); i++) {
-            String linha = saida.get(i);
-            String codigo = semComentario(linha).trim();
+        for (int i = inicio; i < saida.size(); i++) {
+            String codigo = semComentario(saida.get(i)).trim();
             if (codigo.isEmpty()) continue;
-            if (Linha.ler(1, codigo).rotulo() == null) {
-                saida.set(i, rotulo + " " + linha);
-            }
+            if (Linha.ler(1, codigo).rotulo() != null)
+                throw erro(numero, "Rótulo da chamada " + rotulo + " conflita com o rótulo da expansão; use um parâmetro de rótulo");
+            saida.set(i, rotulo + " " + saida.get(i));
             return;
         }
+        throw erro(numero, "Macro sem instruções não pode receber o rótulo " + rotulo);
     }
 
-    private static Definicao analisarDefinicao(String codigo) {
+    private Cabecalho cabecalho(String codigo, int numero) {
+        if (codigo.isEmpty()) return null;
         String[] campos = codigo.split("\\s+", 3);
-        if (campos.length >= 2 && normalizar(campos[1]).equals(MACRO))
-            return new Definicao(campos[0], campos.length == 3 ? analisarArgumentos(campos[2]) : List.of());
-        if (campos.length >= 2 && normalizar(campos[0]).equals(MACRO))
-            return new Definicao(campos[1], campos.length == 3 ? analisarArgumentos(campos[2]) : List.of());
+        if (campos.length == 1 && ehInicio(campos[0])) {
+            // Forma dos slides: delimitador seguido pelo protótipo [rótulo] NOME parâmetros.
+            while (indice < linhas.size()) {
+                String prototipo = semComentario(linhas.get(indice++)).trim();
+                if (prototipo.isEmpty()) continue;
+                String[] partes = prototipo.split("\\s+", 3);
+                if (ehFim(prototipo) || ehInicio(partes[0])) throw erro(numero, "Protótipo de macro ausente");
+                boolean temRotulo = partes.length == 3 && !partes[1].contains(",")
+                    && !partes[2].startsWith(",") && !partes[1].startsWith("&");
+                return new Cabecalho(partes[temRotulo ? 1 : 0],
+                    argumentos(temRotulo ? partes[2] : prototipo.substring(partes[0].length()).trim(), numero),
+                    temRotulo ? normalizar(partes[0]) : null);
+            }
+            throw erro(numero, "Protótipo de macro ausente");
+        }
+        if (campos.length >= 2 && ehInicio(campos[1]))
+            return new Cabecalho(campos[0], argumentos(campos.length == 3 ? campos[2] : "", numero), null);
+        if (campos.length >= 2 && ehInicio(campos[0]))
+            return new Cabecalho(campos[1], argumentos(campos.length == 3 ? campos[2] : "", numero), null);
         return null;
     }
 
-    private static boolean ehMend(String codigo) {
-        String[] campos = codigo.split("\\s+", 2);
-        return normalizar(campos[0]).equals(MEND);
+    private static void validarCabecalho(Cabecalho c, int numero) {
+        if (!c.nome().matches("[A-Za-z_][A-Za-z0-9_]*") || ehInicio(c.nome()) || ehFim(c.nome())
+                || TabelaInstrucoes.de(c.nome()) != null || TabelaDiretivas.de(c.nome()) != null)
+            throw erro(numero, "Nome de macro inválido ou reservado: " + c.nome());
+        List<String> parametros = new ArrayList<>(c.parametros());
+        if (c.parametroRotulo() != null) parametros.add(c.parametroRotulo());
+        for (String p : parametros)
+            if (!IDENTIFICADOR.matcher(p).matches()) throw erro(numero, "Parâmetro inválido: " + p);
+        if (parametros.stream().map(ProcessadorMacros::normalizar).distinct().count() != parametros.size())
+            throw erro(numero, "Parâmetro duplicado na definição de " + c.nome());
     }
 
-    private LinhaExpansivel analisarChamada(String codigo) {
+    private Chamada analisarChamada(String codigo) {
+        if (codigo.isEmpty()) return null;
         String[] campos = codigo.split("\\s+", 3);
-        if (campos.length == 0) return null;
-        String operador;
-        String rotulo = null;
-        String operandos;
-        if (macros.containsKey(normalizar(campos[0]))) {
-            operador = campos[0];
-            operandos = campos.length == 3 ? campos[2] : campos.length == 2 ? campos[1] : "";
-        } else if (campos.length >= 2 && macros.containsKey(normalizar(campos[1]))) {
-            rotulo = campos[0];
-            operador = campos[1];
-            operandos = campos.length == 3 ? campos[2] : "";
-        } else {
-            return null;
-        }
-        return new LinhaExpansivel(rotulo, operador, operandos);
+        String primeiro = normalizar(campos[0]);
+        if (macros.containsKey(primeiro))
+            return new Chamada(null, primeiro, codigo.substring(campos[0].length()).trim());
+        // Um nome de macro no operando de uma instrução não é uma chamada.
+        String operador = primeiro.startsWith("+") ? primeiro.substring(1) : primeiro;
+        if (TabelaInstrucoes.de(operador) != null || TabelaDiretivas.de(operador) != null) return null;
+        if (campos.length >= 2 && macros.containsKey(normalizar(campos[1])))
+            return new Chamada(campos[0], normalizar(campos[1]), campos.length == 3 ? campos[2] : "");
+        return null;
     }
 
-    private static List<String> analisarArgumentos(String texto) {
-        if (texto == null || texto.isBlank()) return List.of();
-        List<String> argumentos = new ArrayList<>();
-        StringBuilder atual = new StringBuilder();
-        char delimitador = 0;
+    private static List<String> argumentos(String texto, int numero) {
+        List<String> resultado = new ArrayList<>();
+        if (texto.isBlank()) return resultado;
+        int inicio = 0;
+        char aspas = 0;
         for (int i = 0; i < texto.length(); i++) {
-            char caractere = texto.charAt(i);
-            if ((caractere == '\'' || caractere == '"') && (delimitador == 0 || delimitador == caractere))
-                delimitador = delimitador == 0 ? caractere : 0;
-            if (caractere == ',' && delimitador == 0) {
-                adicionarArgumento(argumentos, atual);
-            } else {
-                atual.append(caractere);
+            char c = texto.charAt(i);
+            if ((c == '\'' || c == '"') && (aspas == 0 || aspas == c)) aspas = aspas == 0 ? c : 0;
+            if (c == ',' && aspas == 0) {
+                resultado.add(texto.substring(inicio, i).trim());
+                inicio = i + 1;
             }
         }
-        adicionarArgumento(argumentos, atual);
-        return List.copyOf(argumentos);
-    }
-
-    private static void adicionarArgumento(List<String> argumentos, StringBuilder atual) {
-        String argumento = atual.toString().trim();
-        if (!argumento.isEmpty()) argumentos.add(argumento);
-        atual.setLength(0);
-    }
-
-    private static String substituir(String texto, Map<String, String> substituicoes) {
-        String resultado = texto;
-        for (Map.Entry<String, String> entrada : substituicoes.entrySet()) {
-            Pattern padrao = Pattern.compile("(?i)(?<![A-Za-z0-9_])"
-                + Pattern.quote(entrada.getKey()) + "(?![A-Za-z0-9_])");
-            Matcher matcher = padrao.matcher(resultado);
-            resultado = matcher.replaceAll(Matcher.quoteReplacement(entrada.getValue()));
-        }
+        if (aspas != 0) throw erro(numero, "Aspas não fechadas na lista de argumentos");
+        resultado.add(texto.substring(inicio).trim());
         return resultado;
     }
 
+    private static String substituir(String texto, Map<String, String> ambiente, long serial) {
+        String codigo = semComentario(texto);
+        Matcher matcher = TOKEN.matcher(codigo);
+        StringBuilder resultado = new StringBuilder();
+        while (matcher.find()) {
+            String valor = ambiente.get(normalizar(matcher.group()));
+            if (serial != 0 && matcher.group().equalsIgnoreCase(".SER"))
+                valor = String.format(Locale.ROOT, "%04d", serial);
+            // Substituição simultânea: um argumento não é reinterpretado como outro formal.
+            matcher.appendReplacement(resultado, Matcher.quoteReplacement(valor == null ? matcher.group() : valor));
+        }
+        matcher.appendTail(resultado);
+        return resultado + texto.substring(codigo.length());
+    }
+
     private static String semComentario(String texto) {
-        int comentario = texto.indexOf(';');
-        return comentario < 0 ? texto : texto.substring(0, comentario);
+        char aspas = 0;
+        for (int i = 0; i < texto.length(); i++) {
+            char c = texto.charAt(i);
+            if ((c == '\'' || c == '"') && (aspas == 0 || aspas == c)) aspas = aspas == 0 ? c : 0;
+            if (c == ';' && aspas == 0) return texto.substring(0, i);
+        }
+        return texto;
     }
 
-    private static String normalizar(String nome) {
-        return nome.toUpperCase(Locale.ROOT);
+    private static boolean ehInicio(String texto) {
+        return normalizar(texto).equals("MACRO") || normalizar(texto).equals("MCDEFN");
     }
 
-    private static IllegalArgumentException erro(int numeroLinha, String mensagem) {
-        return new IllegalArgumentException("Linha " + numeroLinha + ": " + mensagem);
+    private static boolean ehFim(String codigo) {
+        String token = normalizar(codigo.split("\\s+", 2)[0]);
+        return token.equals("MEND") || token.equals("MCEND");
+    }
+
+    private static String normalizar(String nome) { return nome.toUpperCase(Locale.ROOT); }
+    private static IllegalArgumentException erro(int linha, String mensagem) {
+        return new IllegalArgumentException("Linha " + linha + ": " + mensagem);
     }
 }
